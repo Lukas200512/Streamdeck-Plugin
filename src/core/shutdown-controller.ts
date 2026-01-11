@@ -84,7 +84,8 @@ export class ShutdownController {
 				await this.power.abortScheduled();
 			});
 			this.state = "idle";
-			void this.renderMessageAcrossDevices("Cancelled", this.sharedSettings);
+			const color = this.sharedSettings.armed ? "#ff3b30" : "#3fa3ff";
+			void this.renderMessageAcrossDevices("Shutdown", this.sharedSettings, false, color);
 			void this.clearTitlesAcrossDevices();
 		}
 
@@ -170,7 +171,8 @@ export class ShutdownController {
 			await this.renderMessageAcrossDevices("Cancelled", this.sharedSettings, true);
 			await this.clearTitlesAcrossDevices();
 			this.state = "idle";
-			await this.renderMessageAcrossDevices("Shutdown", this.sharedSettings);
+			const color = this.sharedSettings.armed ? "#ff3b30" : "#3fa3ff";
+			await this.renderMessageAcrossDevices("Shutdown", this.sharedSettings, false, color);
 			await this.clearTitlesAcrossDevices();
 		}
 	}
@@ -213,11 +215,17 @@ export class ShutdownController {
 		);
 	}
 
-	private async renderMessageAcrossDevices(message: string, settings: NormalizedSettings, blink = false): Promise<void> {
+	private async renderMessageAcrossDevices(
+		message: string,
+		settings: NormalizedSettings,
+		blink = false,
+		textColor?: string
+	): Promise<void> {
 		await Promise.all(
 			this.getKeysPerDevice().map(async (keys) => {
 				await this.renderer.renderMessage(message, keys, {
 					accentColor: settings.accentColor,
+					textColor: textColor ?? undefined,
 					progressColor: settings.accentColor,
 					blink,
 					multiTileLayout: settings.multiTileLayout || keys.length > 1
@@ -240,8 +248,9 @@ export class ShutdownController {
 		}
 
 		const armed = this.sharedSettings.armed;
-		const message = armed ? "Live mode - press to start" : "Preview mode - press to start";
-		await this.renderMessageAcrossDevices(message, this.sharedSettings);
+		const message = "Shutdown";
+		const color = armed ? "#ff3b30" : "#3fa3ff";
+		await this.renderMessageAcrossDevices(message, this.sharedSettings, false, color);
 		await this.clearTitlesAcrossDevices();
 	}
 
