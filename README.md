@@ -1,4 +1,4 @@
-# ShutDown Stream Deck Plugin
+#  ShutDown Stream Deck Plugin
 
 A Stream Deck plugin that shows a multi-key countdown and triggers a system power action (shutdown, restart, or sleep) when it finishes. Works on Windows with the Stream Deck app (SDK 3+, tested with Node.js 20).
 
