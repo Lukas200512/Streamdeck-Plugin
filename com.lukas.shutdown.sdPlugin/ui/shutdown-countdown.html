@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8" />
+	<title>Shutdown Countdown Settings</title>
+	<script src="https://sdpi-components.dev/releases/v4/sdpi-components.js"></script>
+	<style>
+		body {
+			font-family: "Segoe UI", Arial, sans-serif;
+		}
+
+		sdpi-item small {
+			opacity: 0.75;
+		}
+
+		.inline {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+		}
+	</style>
+</head>
+
+<body>
+	<sdpi-item label="Countdown (s)">
+		<div class="inline">
+			<input id="countdownSeconds" type="range" min="5" max="30" step="1" value="10" />
+			<span id="countdownSecondsValue">10s</span>
+		</div>
+		<small>Between 5 and 30 seconds.</small>
+	</sdpi-item>
+
+	<sdpi-item label="Akzentfarbe">
+		<div class="inline">
+			<input id="accentColor" type="color" value="#00d37f" />
+			<span>#00d37f</span>
+		</div>
+		<small>Accent for digits & glow (progress ring auto green/yellow/red).</small>
+	</sdpi-item>
+
+	<sdpi-item label="Armed (live)">
+		<input id="armed" type="checkbox" />
+		<small>On = execute system power action. Off = preview only.</small>
+	</sdpi-item>
+
+	<sdpi-item label="Multi-Key Layout">
+		<input id="multiTileLayout" type="checkbox" checked />
+		<small>Enable combined rendering across multiple keys. Off = render per key.</small>
+	</sdpi-item>
+
+	<sdpi-item label="Power action">
+		<select id="powerAction">
+			<option value="shutdown">Shutdown</option>
+			<option value="restart">Restart</option>
+			<option value="sleep">Sleep</option>
+		</select>
+		<small>Action executed when countdown finishes (only if Armed is on).</small>
+	</sdpi-item>
+
+	<script>
+		let websocket;
+		let uuid;
+
+		const state = {
+			countdownSeconds: 10,
+			accentColor: "#00d37f",
+			multiTileLayout: true,
+			armed: false,
+			powerAction: "shutdown"
+		};
+
+		const els = {
+			countdown: document.getElementById("countdownSeconds"),
+			countdownValue: document.getElementById("countdownSecondsValue"),
+			accentColor: document.getElementById("accentColor"),
+			multiTile: document.getElementById("multiTileLayout"),
+			armed: document.getElementById("armed"),
+			powerAction: document.getElementById("powerAction")
+		};
+
+		function connectElgatoStreamDeckSocket(port, inUUID, registerEvent) {
+			uuid = inUUID;
+			websocket = new WebSocket(`ws://127.0.0.1:${port}`);
+			websocket.onopen = () => {
+				websocket.send(JSON.stringify({ event: registerEvent, uuid }));
+				requestSettings();
+			};
+			websocket.onmessage = (evt) => {
+				const msg = JSON.parse(evt.data);
+				if (msg.event === "didReceiveSettings") {
+					applySettings(msg.payload?.settings ?? {});
+				}
+			};
+		}
+
+		function requestSettings() {
+			websocket?.send(JSON.stringify({ event: "getSettings", context: uuid }));
+		}
+
+		function applySettings(payload) {
+			state.countdownSeconds = clampSeconds(payload.countdownSeconds ?? state.countdownSeconds);
+			state.accentColor = normalizeColor(payload.accentColor ?? state.accentColor);
+			state.multiTileLayout = payload.multiTileLayout !== undefined ? !!payload.multiTileLayout : state.multiTileLayout;
+			state.armed = payload.armed !== undefined ? !!payload.armed : state.armed;
+			state.powerAction = payload.powerAction ?? state.powerAction;
+			syncUi();
+		}
+
+		function pushSettings() {
+			if (!websocket || websocket.readyState !== WebSocket.OPEN) return;
+			websocket.send(JSON.stringify({ event: "setSettings", context: uuid, payload: state }));
+		}
+
+		function syncUi() {
+			els.countdown.value = state.countdownSeconds;
+			els.countdownValue.textContent = `${state.countdownSeconds}s`;
+			els.accentColor.value = state.accentColor;
+			els.accentColor.nextElementSibling.textContent = state.accentColor;
+			els.multiTile.checked = state.multiTileLayout;
+			els.armed.checked = state.armed;
+			els.powerAction.value = state.powerAction;
+		}
+
+		function clampSeconds(value) {
+			const num = Number(value);
+			if (!Number.isFinite(num)) return 10;
+			return Math.min(30, Math.max(5, Math.round(num)));
+		}
+
+		function normalizeColor(value) {
+			if (!value) return "#00d37f";
+			const hex = value.startsWith("#") ? value.slice(1) : value;
+			return /^[0-9a-fA-F]{6}$/.test(hex) ? `#${hex}`.toLowerCase() : "#00d37f";
+		}
+
+		els.countdown.addEventListener("input", (ev) => {
+			const value = Number(ev.target.value);
+			state.countdownSeconds = clampSeconds(value);
+			els.countdownValue.textContent = `${state.countdownSeconds}s`;
+			pushSettings();
+		});
+
+		els.accentColor.addEventListener("input", (ev) => {
+			state.accentColor = normalizeColor(ev.target.value);
+			els.accentColor.nextElementSibling.textContent = state.accentColor;
+			pushSettings();
+		});
+
+		els.multiTile.addEventListener("change", (ev) => {
+			state.multiTileLayout = !!ev.target.checked;
+			pushSettings();
+		});
+
+		els.armed.addEventListener("change", (ev) => {
+			state.armed = !!ev.target.checked;
+			pushSettings();
+		});
+
+		els.powerAction.addEventListener("change", (ev) => {
+			const value = ev.target.value;
+			state.powerAction = value === "restart" || value === "sleep" ? value : "shutdown";
+			pushSettings();
+		});
+	</script>
+</body>
+
+</html>
