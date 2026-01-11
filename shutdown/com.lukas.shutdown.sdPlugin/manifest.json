@@ -1,0 +1,52 @@
+{
+	"Name": "ShutDown",
+	"Version": "0.1.0.0",
+  "Author": "Lukas",
+	"Actions": [
+		{
+			"Name": "Shutdown Master",
+			"UUID": "com.lukas.shutdown.master",
+			"Icon": "imgs/actions/counter/icon",
+			"Tooltip": "Master: Einstellungen setzen und Countdown starten.",
+			"Controllers": ["Keypad"],
+			"PropertyInspectorPath": "ui/shutdown-countdown.html",
+			"States": [
+				{
+					"Image": "imgs/actions/counter/key",
+					"TitleAlignment": "middle"
+				}
+			]
+		},
+		{
+			"Name": "Shutdown Child",
+			"UUID": "com.lukas.shutdown.child",
+			"Icon": "imgs/actions/counter/icon",
+			"Tooltip": "Child: nutzt die Master-Einstellungen derselben Seite.",
+			"Controllers": ["Keypad"],
+			"States": [
+				{
+					"Image": "imgs/actions/counter/key",
+					"TitleAlignment": "middle"
+				}
+			]
+		}
+	],
+	"Category": "ShutDown",
+	"CategoryIcon": "imgs/plugin/category-icon",
+	"CodePath": "bin/plugin.js",
+	"Description": "Shutdown your PC with a cool animation",
+	"Icon": "imgs/plugin/marketplace",
+	"SDKVersion": 3,
+	"Software": {
+		"MinimumVersion": "6.9"
+	},
+	"OS": [
+		{ "Platform": "mac", "MinimumVersion": "12" },
+		{ "Platform": "windows", "MinimumVersion": "10" }
+	],
+	"Nodejs": {
+		"Version": "20",
+		"Debug": "enabled"
+	},
+	"UUID": "com.lukas.shutdown"
+}
