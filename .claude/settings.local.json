@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run build:*)",
+      "Bash(streamdeck --version:*)",
+      "Bash(streamdeck -v:*)",
+      "Bash(streamdeck pack:*)",
+      "Bash(npx tsc:*)"
+    ]
+  }
+}

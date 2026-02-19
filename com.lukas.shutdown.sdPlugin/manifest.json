@@ -1,14 +1,16 @@
 {
 	"Name": "ShutDown",
-	"Version": "0.1.0.0",
-  "Author": "Lukas",
+	"Version": "0.2.0.0",
+	"Author": "Lukas",
 	"Actions": [
 		{
 			"Name": "Shutdown Master",
 			"UUID": "com.lukas.shutdown.master",
 			"Icon": "imgs/actions/counter/icon",
-			"Tooltip": "Master: Einstellungen setzen und Countdown starten.",
-			"Controllers": ["Keypad"],
+			"Tooltip": "Master: configure settings and start the countdown.",
+			"Controllers": [
+				"Keypad"
+			],
 			"PropertyInspectorPath": "ui/shutdown-countdown.html",
 			"States": [
 				{
@@ -21,8 +23,10 @@
 			"Name": "Shutdown Child",
 			"UUID": "com.lukas.shutdown.child",
 			"Icon": "imgs/actions/counter/icon",
-			"Tooltip": "Child: nutzt die Master-Einstellungen derselben Seite.",
-			"Controllers": ["Keypad"],
+			"Tooltip": "Child: mirrors master settings on the same page.",
+			"Controllers": [
+				"Keypad"
+			],
 			"States": [
 				{
 					"Image": "imgs/actions/counter/key",
@@ -34,15 +38,21 @@
 	"Category": "ShutDown",
 	"CategoryIcon": "imgs/plugin/category-icon",
 	"CodePath": "bin/plugin.js",
-	"Description": "Shutdown your PC with a cool animation",
+	"Description": "Multi-key countdown with shutdown, restart, sleep, hibernate, or log-off.",
 	"Icon": "imgs/plugin/marketplace",
 	"SDKVersion": 3,
 	"Software": {
 		"MinimumVersion": "6.9"
 	},
 	"OS": [
-		{ "Platform": "mac", "MinimumVersion": "12" },
-		{ "Platform": "windows", "MinimumVersion": "10" }
+		{
+			"Platform": "mac",
+			"MinimumVersion": "12"
+		},
+		{
+			"Platform": "windows",
+			"MinimumVersion": "10"
+		}
 	],
 	"Nodejs": {
 		"Version": "20",

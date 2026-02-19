@@ -1,7 +1,7 @@
 import { action, SingletonAction } from "@elgato/streamdeck";
-import type { KeyDownEvent, WillAppearEvent, WillDisappearEvent, DidReceiveSettingsEvent } from "@elgato/streamdeck";
+import type { KeyDownEvent, KeyUpEvent, WillAppearEvent, WillDisappearEvent, DidReceiveSettingsEvent } from "@elgato/streamdeck";
 
-import type { ShutdownSettings } from "../core/shutdown-controller";
+import type { ShutdownSettings } from "../core/types";
 import { shutdownController } from "../core/shutdown-controller";
 
 @action({ UUID: "com.lukas.shutdown.child" })
@@ -20,5 +20,9 @@ export class ShutdownChildAction extends SingletonAction<ShutdownSettings> {
 
 	override async onKeyDown(ev: KeyDownEvent<ShutdownSettings>): Promise<void> {
 		await shutdownController.handleKeyDown(ev, "child");
+	}
+
+	override async onKeyUp(ev: KeyUpEvent<ShutdownSettings>): Promise<void> {
+		await shutdownController.handleKeyUp(ev, "child");
 	}
 }

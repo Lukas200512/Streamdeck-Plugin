@@ -1,105 +1,104 @@
-export type CountdownState = "idle" | "running" | "cancelled";
+/**
+ * Data emitted on every tick of the countdown.
+ */
+export type TickData = {
+	/** Whole seconds remaining (ceiling). */
+	remainingSeconds: number;
+	/** Fraction of total duration remaining (1 = full, 0 = done). */
+	fraction: number;
+	/** Original duration in seconds. */
+	totalSeconds: number;
+};
+
+type TickCallback = (data: TickData) => Promise<void> | void;
+type CompleteCallback = () => Promise<void> | void;
+
+/** Tick interval in milliseconds — 100ms gives smooth ~10 FPS animation. */
+const TICK_MS = 100;
 
 /**
- * Drives a simple second-based countdown without leaking timers.
+ * Drift-corrected countdown timer.
+ *
+ * Uses Date.now() as the time reference so the displayed remaining time never
+ * drifts away from wall-clock time, regardless of how long each tick callback
+ * takes to execute.
  */
 export class CountdownTimer {
-	private readonly durationSeconds: number;
-	private state: CountdownState = "idle";
-	private remainingSeconds = 0;
-	private timeout?: NodeJS.Timeout;
+	private state: "idle" | "running" = "idle";
+	private startTime = 0;
+	private durationMs = 0;
+	private totalSeconds = 0;
+	private interval?: NodeJS.Timeout;
 
-	constructor(durationSeconds: number) {
-		this.durationSeconds = durationSeconds;
+	isRunning(): boolean {
+		return this.state === "running";
 	}
 
-	getState(): CountdownState {
-		return this.state;
-	}
-
-	getDurationSeconds(): number {
-		return this.durationSeconds;
-	}
-
-	getRemainingSeconds(): number {
-		return this.remainingSeconds;
+	/** Returns the current countdown snapshot without side-effects. */
+	snapshot(): TickData {
+		if (this.state !== "running") {
+			return { remainingSeconds: 0, fraction: 0, totalSeconds: this.totalSeconds };
+		}
+		return this.compute();
 	}
 
 	/**
-	 * Starts the countdown; returns `false` when a countdown is already running.
+	 * Starts the countdown. Returns false if already running.
 	 */
-	start(onTick: (remainingSeconds: number) => Promise<void> | void, onComplete: () => Promise<void> | void): boolean {
-		if (this.state === "running") {
-			return false;
-		}
+	start(seconds: number, onTick: TickCallback, onComplete: CompleteCallback): boolean {
+		if (this.state === "running") return false;
 
+		this.totalSeconds = seconds;
+		this.durationMs = seconds * 1000;
+		this.startTime = Date.now();
 		this.state = "running";
-		this.remainingSeconds = this.durationSeconds;
-		this.scheduleTick(onTick, onComplete);
-		return true;
-	}
 
-	/**
-	 * Cancels the countdown; resolves `false` if no countdown is running.
-	 */
-	async cancel(onCancel?: () => Promise<void> | void): Promise<boolean> {
-		if (this.state !== "running") {
-			return false;
-		}
+		const tick = async (): Promise<void> => {
+			if (this.state !== "running") return;
 
-		if (this.timeout) {
-			clearTimeout(this.timeout);
-			this.timeout = undefined;
-		}
+			const data = this.compute();
+			await onTick(data);
 
-		this.state = "cancelled";
-		this.remainingSeconds = 0;
-
-		if (onCancel) {
-			await onCancel();
-		}
-
-		this.state = "idle";
-		return true;
-	}
-
-	/**
-	 * Ensures timers are cleaned up when the action disappears.
-	 */
-	dispose(): void {
-		if (this.timeout) {
-			clearTimeout(this.timeout);
-			this.timeout = undefined;
-		}
-		this.remainingSeconds = 0;
-		this.state = "idle";
-	}
-
-	private scheduleTick(onTick: (remainingSeconds: number) => Promise<void> | void, onComplete: () => Promise<void> | void): void {
-		void this.runTick(onTick, onComplete);
-	}
-
-	private async runTick(onTick: (remainingSeconds: number) => Promise<void> | void, onComplete: () => Promise<void> | void): Promise<void> {
-		await onTick(this.remainingSeconds);
-
-		if (this.state !== "running") {
-			return;
-		}
-
-		if (this.remainingSeconds === 0) {
-			this.timeout = undefined;
-			this.state = "idle";
-			await onComplete();
-			return;
-		}
-
-		this.timeout = setTimeout(() => {
-			if (this.state !== "running") {
-				return;
+			if (data.fraction <= 0 && this.state === "running") {
+				this.stop();
+				await onComplete();
 			}
+		};
 
-			this.remainingSeconds -= 1;
-			this.scheduleTick(onTick, onComplete);
-		}, 1000);
+		// Immediate first tick so the display updates instantly on press.
+		void tick();
+		this.interval = setInterval(() => void tick(), TICK_MS);
+
+		return true;
+	}
+
+	/** Cancels the running countdown. Returns false if not running. */
+	cancel(): boolean {
+		if (this.state !== "running") return false;
+		this.stop();
+		return true;
+	}
+
+	/** Emergency cleanup — call when keys disappear. */
+	dispose(): void {
+		this.stop();
+	}
+
+	private stop(): void {
+		if (this.interval) {
+			clearInterval(this.interval);
+			this.interval = undefined;
+		}
+		this.state = "idle";
+	}
+
+	private compute(): TickData {
+		const elapsed = Date.now() - this.startTime;
+		const remainingMs = Math.max(0, this.durationMs - elapsed);
+		return {
+			remainingSeconds: Math.ceil(remainingMs / 1000),
+			fraction: this.durationMs > 0 ? remainingMs / this.durationMs : 0,
+			totalSeconds: this.totalSeconds,
+		};
 	}
 }

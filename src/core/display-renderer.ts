@@ -1,313 +1,319 @@
 import type { KeyAction } from "@elgato/streamdeck";
 
-type Tile = {
-	action: KeyAction;
-	col: number;
-	row: number;
-};
+// ── Color utilities ──────────────────────────────────────────────────────────
 
-type Layout = {
-	tileSize: number;
-	minCol: number;
-	minRow: number;
-	columns: number;
-	rows: number;
-	widthPx: number;
-	heightPx: number;
-};
+function hexToRgb(hex: string): [number, number, number] {
+	const h = hex.startsWith("#") ? hex.slice(1) : hex;
+	return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+}
 
-type DisplayStyle = {
-	accent: string;
-	text: string;
-	background: string;
-	grid: string;
-	progressBg: string;
-	progressFg: string;
-	blink: boolean;
-};
+// ── Constants ────────────────────────────────────────────────────────────────
 
-type RenderOptions = {
-	accentColor?: string;
+const AMBER = "#e8943a";
+const RED = "#ff3b30";
+
+function lerpColor(a: [number, number, number], b: [number, number, number], t: number): string {
+	const r = Math.round(a[0] + (b[0] - a[0]) * t);
+	const g = Math.round(a[1] + (b[1] - a[1]) * t);
+	const b2 = Math.round(a[2] + (b[2] - a[2]) * t);
+	return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b2.toString(16).padStart(2, "0")}`;
+}
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+type Tile = { action: KeyAction; col: number; row: number };
+type Layout = { tileSize: number; minCol: number; minRow: number; columns: number; rows: number; widthPx: number; heightPx: number };
+
+export type RenderOptions = {
+	accentColor: string;
+	multiTileLayout: boolean;
 	textColor?: string;
-	backgroundColor?: string;
-	gridColor?: string;
-	progressColor?: string;
-	progressBackground?: string;
 	blink?: boolean;
-	multiTileLayout?: boolean;
+	subtitle?: string;
+	subtitleColor?: string;
+	borderColor?: string;
 };
+
+// ── Renderer ─────────────────────────────────────────────────────────────────
 
 /**
- * Renders multi-key images for numbers and messages by composing a single SVG
- * across all keys and cropping it per key via the viewBox.
+ * Instrument-gauge themed SVG renderer for Stream Deck keys.
+ *
+ * Dual-color progress ring (green remaining + amber elapsed), 60 tick marks
+ * with amber cardinal markers, seven-segment digits with glow, no grid lines.
  */
 export class DisplayRenderer {
-	private readonly tileSize = 200;
+	private readonly ts = 144;
 
-	async renderCountdown(remaining: number, totalSeconds: number, actions: KeyAction[], options?: RenderOptions): Promise<void> {
-		const tiles = this.prepareTiles(actions);
-		if (tiles.length === 0) {
-			return;
-		}
+	// ── Public API ───────────────────────────────────────────────────────
 
-		const useMultiTile = options?.multiTileLayout === true && tiles.length > 1;
-		const style = this.buildStyle(remaining, totalSeconds, options);
-		const progress = totalSeconds > 0 ? 1 - Math.max(0, Math.min(1, remaining / totalSeconds)) : 1;
+	async renderCountdown(remainingSeconds: number, fraction: number, keys: KeyAction[], options: RenderOptions): Promise<void> {
+		const tiles = this.prepareTiles(keys);
+		if (tiles.length === 0) return;
 
-		if (useMultiTile) {
+		const useMulti = options.multiTileLayout && tiles.length > 1;
+		const blink = options.blink === true && Math.floor(Date.now() / 500) % 2 === 0;
+		const arcColor = this.computeArcColor(fraction, options.accentColor);
+
+		if (useMulti) {
 			const layout = this.buildLayout(tiles);
-			const content = this.buildCountdownGraphic(remaining, layout, style, progress);
-			await this.renderAcrossTiles(tiles, layout, content, style);
-			return;
-		}
-
-		// Render independently per key when not using multi-tile layout.
-		await Promise.all(
-			tiles.map(async (tile) => {
+			const content = [
+				this.buildTickMarks(layout),
+				this.buildDualRing(layout, arcColor, fraction),
+				this.buildCountdownDigits(remainingSeconds, layout, arcColor),
+			].join("");
+			await this.renderTiles(tiles, layout, content, options, blink);
+		} else {
+			await Promise.all(tiles.map(async (tile) => {
 				const layout = this.buildLayout([tile]);
-				const content = this.buildCountdownGraphic(remaining, layout, style, progress);
-				await this.renderAcrossTiles([tile], layout, content, style);
-			})
-		);
+				const content = [
+					this.buildTickMarks(layout),
+					this.buildDualRing(layout, arcColor, fraction),
+					this.buildCountdownDigits(remainingSeconds, layout, arcColor),
+				].join("");
+				await this.renderTiles([tile], layout, content, options, blink);
+			}));
+		}
 	}
 
-	async renderMessage(message: string, actions: KeyAction[], options?: RenderOptions): Promise<void> {
-		const tiles = this.prepareTiles(actions);
-		if (tiles.length === 0) {
-			return;
-		}
+	async renderMessage(message: string, keys: KeyAction[], options: RenderOptions): Promise<void> {
+		const tiles = this.prepareTiles(keys);
+		if (tiles.length === 0) return;
 
-		// Always render messages on a single virtual canvas; when multiple keys are present,
-		// treat the full layout as one surface and slice it for the keys.
-		const useMultiTile = tiles.length > 1;
-		const style = this.buildStyle(1, 1, options);
+		const useMulti = tiles.length > 1;
+		const blink = options.blink === true && Math.floor(Date.now() / 500) % 2 === 0;
+		const textColor = options.textColor ?? "#e7f0ff";
 
-		if (useMultiTile) {
+		if (useMulti) {
 			const layout = this.buildLayout(tiles);
-			const content = this.buildMessageGraphic(message, layout, style);
-			await this.renderAcrossTiles(tiles, layout, content, style);
-			return;
-		}
-
-		await Promise.all(
-			tiles.map(async (tile) => {
+			const content = [
+				this.buildDecoRing(layout, textColor),
+				this.buildTickMarks(layout),
+				this.buildMessageText(message, layout, textColor),
+			].join("");
+			await this.renderTiles(tiles, layout, content, options, blink);
+		} else {
+			await Promise.all(tiles.map(async (tile) => {
 				const layout = this.buildLayout([tile]);
-				const content = this.buildMessageGraphic(message, layout, style);
-				await this.renderAcrossTiles([tile], layout, content, style);
-			})
-		);
+				const content = [
+					this.buildDecoRing(layout, textColor),
+					this.buildTickMarks(layout),
+					this.buildMessageText(message, layout, textColor),
+				].join("");
+				await this.renderTiles([tile], layout, content, options, blink);
+			}));
+		}
 	}
 
-	private async renderAcrossTiles(tiles: Tile[], layout: Layout, content: string, style: DisplayStyle): Promise<void> {
-		const defs = this.buildDefs(style);
-		const background = this.baseBackground(layout, style);
-		const grid = this.gridLines(layout, style);
-		const fullGraphic = `${defs}${background}${grid}${content}`;
+	// ── Core tile rendering ──────────────────────────────────────────────
 
-		await Promise.all(
-			tiles.map(async (tile) => {
-				const viewX = (tile.col - layout.minCol) * layout.tileSize;
-				const viewY = (tile.row - layout.minRow) * layout.tileSize;
-				const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewX} ${viewY} ${layout.tileSize} ${layout.tileSize}" width="200" height="200">${fullGraphic}</svg>`;
-				const dataUri = this.toDataUri(svg);
-				await tile.action.setImage(dataUri);
-			})
-		);
-	}
+	private async renderTiles(
+		tiles: Tile[], layout: Layout, content: string, options: RenderOptions, blink = false,
+	): Promise<void> {
+		const parts = [
+			this.buildDefs(),
+			this.buildBackground(layout, blink),
+			content,
+		];
 
-	private buildCountdownGraphic(remaining: number, layout: Layout, style: DisplayStyle, progress: number): string {
-		const digits = remaining.toString().split("");
-		const baseDigitWidth = 80;
-		const baseDigitHeight = 140;
-		const gap = 20;
-		const padding = layout.tileSize * 0.08;
-
-		const contentWidth = digits.length * baseDigitWidth + Math.max(0, digits.length - 1) * gap;
-		const contentHeight = baseDigitHeight;
-		const scale = Math.min(
-			(layout.widthPx - padding * 2) / contentWidth,
-			(layout.heightPx - padding * 2) / contentHeight
-		);
-
-		const digitWidth = baseDigitWidth * scale;
-		const digitHeight = baseDigitHeight * scale;
-		const digitGap = gap * scale;
-		const totalWidth = digits.length * digitWidth + Math.max(0, digits.length - 1) * digitGap;
-		const startX = (layout.widthPx - totalWidth) / 2;
-		const startY = (layout.heightPx - digitHeight) / 2;
-
-		let segments = "";
-		for (const [index, char] of digits.entries()) {
-			const digit = Number.parseInt(char, 10);
-			const flags = this.segmentsForDigit(Number.isNaN(digit) ? 0 : digit);
-			const x = startX + index * (digitWidth + digitGap);
-			segments += this.renderDigit(flags, x, startY, digitWidth, digitHeight, style);
+		if (options.subtitle) {
+			parts.push(this.buildSubtitle(options.subtitle, layout, options.subtitleColor ?? "rgba(255,255,255,0.3)"));
+		}
+		if (options.borderColor) {
+			parts.push(this.buildBorder(layout, options.borderColor));
 		}
 
-		const progressRing = this.progressSweep(layout, style, progress);
-		return `${progressRing}${segments}`;
+		const full = parts.join("");
+		const s = this.ts;
+
+		await Promise.all(tiles.map(async (tile) => {
+			const vx = (tile.col - layout.minCol) * s;
+			const vy = (tile.row - layout.minRow) * s;
+			const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vx} ${vy} ${s} ${s}" width="144" height="144">${full}</svg>`;
+			await tile.action.setImage(`data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`);
+		}));
 	}
 
-	private buildMessageGraphic(message: string, layout: Layout, style: DisplayStyle): string {
-		const safeMessage = this.escapeXml(message);
-		const isMulti = layout.columns > 1 || layout.rows > 1;
+	// ── Defs ─────────────────────────────────────────────────────────────
 
-		// Extra padding to prevent clipping across multi-key viewBox crops.
-		const padding = isMulti ? Math.max(layout.tileSize * 0.16, layout.widthPx * 0.05) : layout.tileSize * 0.12;
-		const maxFontByWidth = (layout.widthPx - padding * 2) / Math.max(3, safeMessage.length * 0.62);
-		const maxFontByHeight = layout.heightPx * 0.38;
-		const fontSize = Math.min(maxFontByWidth, maxFontByHeight);
+	private buildDefs(): string {
+		return `<defs><radialGradient id="bg" cx="50%" cy="50%" r="70%"><stop offset="0%" stop-color="#0a0e18"/><stop offset="100%" stop-color="#030508"/></radialGradient><filter id="glow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="3"/><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>`;
+	}
 
-		// Center text across the full canvas; small global left-safe inset to avoid clipping leading glyphs.
-		const leftInset = isMulti ? Math.max(layout.tileSize * 0.08, layout.widthPx * 0.032) : 0;
-		const centerX = layout.widthPx / 2 - leftInset;
-		const centerY = layout.heightPx / 2 + fontSize / 3;
+	// ── Background ───────────────────────────────────────────────────────
 
-		if (!safeMessage) {
-			return "";
+	private buildBackground(layout: Layout, blink: boolean): string {
+		let bg = `<rect width="${layout.widthPx}" height="${layout.heightPx}" fill="url(#bg)"/>`;
+		if (blink) {
+			bg += `<rect width="${layout.widthPx}" height="${layout.heightPx}" fill="rgba(255,40,40,0.08)"/>`;
 		}
-
-		return `<g filter="url(#digit-glow)">
-			<text x="${centerX}" y="${centerY}" fill="${style.text}" font-family="Segoe UI Semibold,Segoe UI,Arial" font-size="${fontSize}" text-anchor="middle" letter-spacing="${fontSize * 0.038}" dominant-baseline="middle">${safeMessage}</text>
-		</g>`;
+		return bg;
 	}
 
-	private renderDigit(flags: boolean[], x: number, y: number, width: number, height: number, style: DisplayStyle): string {
-		const thickness = Math.min(width, height) * 0.18;
-		const horizontalLength = width - thickness * 2;
-		const verticalLength = (height - thickness * 3) / 2;
-		const radius = thickness * 0.35;
+	// ── 60 tick marks with amber cardinal markers ────────────────────────
 
-		const coreSegments = this.segmentSet(flags, x, y, horizontalLength, verticalLength, thickness, radius, style.accent);
-		return `<g filter="url(#digit-glow)">${coreSegments}</g>`;
-	}
-
-	private segmentSet(
-		flags: boolean[],
-		x: number,
-		y: number,
-		horizontalLength: number,
-		verticalLength: number,
-		thickness: number,
-		radius: number,
-		fill: string
-	): string {
-		const segments: Array<string> = [];
-		if (flags[0]) segments.push(this.segmentRect(x + thickness, y, horizontalLength, thickness, radius, fill));
-		if (flags[1]) segments.push(this.segmentRect(x + thickness + horizontalLength, y + thickness, thickness, verticalLength, radius, fill));
-		if (flags[2]) segments.push(this.segmentRect(x + thickness + horizontalLength, y + thickness * 2 + verticalLength, thickness, verticalLength, radius, fill));
-		if (flags[3]) segments.push(this.segmentRect(x + thickness, y + thickness * 2 + verticalLength * 2, horizontalLength, thickness, radius, fill));
-		if (flags[4]) segments.push(this.segmentRect(x, y + thickness * 2 + verticalLength, thickness, verticalLength, radius, fill));
-		if (flags[5]) segments.push(this.segmentRect(x, y + thickness, thickness, verticalLength, radius, fill));
-		if (flags[6]) segments.push(this.segmentRect(x + thickness, y + thickness + verticalLength, horizontalLength, thickness, radius, fill));
-		return segments.join("");
-	}
-
-	private segmentRect(x: number, y: number, width: number, height: number, radius: number, fill: string): string {
-		return `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${radius}" ry="${radius}" fill="${fill}" />`;
-	}
-
-	private progressSweep(layout: Layout, style: DisplayStyle, progress: number): string {
-		const clamped = Math.max(0, Math.min(1, progress));
+	private buildTickMarks(layout: Layout): string {
 		const cx = layout.widthPx / 2;
 		const cy = layout.heightPx / 2;
-		const radius = Math.min(layout.widthPx, layout.heightPx) / 2 - layout.tileSize * 0.12;
-		const circumference = 2 * Math.PI * radius;
-		const dashLength = circumference * clamped;
-		const strokeWidth = Math.max(8, layout.tileSize * 0.05);
+		const outerR = Math.min(layout.widthPx, layout.heightPx) / 2 - this.ts * 0.03;
+		const marks: string[] = [];
 
-		return `
-			<g>
-				<circle cx="${cx}" cy="${cy}" r="${radius}" fill="none" stroke="${style.progressBg}" stroke-width="${strokeWidth}" />
-				<circle cx="${cx}" cy="${cy}" r="${radius}" fill="none" stroke="${style.progressFg}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-dasharray="${dashLength} ${circumference}" transform="rotate(-90 ${cx} ${cy})" />
-			</g>
-		`;
+		for (let i = 0; i < 60; i++) {
+			const angle = i * 6;
+			const isMajor = i % 5 === 0;
+			const isCardinal = i === 0 || i === 15 || i === 30 || i === 45;
+
+			const len = isMajor ? this.ts * 0.055 : this.ts * 0.025;
+			const w = isMajor ? 2 : 1;
+			const color = isCardinal ? AMBER : isMajor ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.12)";
+
+			marks.push(`<line x1="${this.n(cx)}" y1="${this.n(cy - outerR)}" x2="${this.n(cx)}" y2="${this.n(cy - outerR + len)}" stroke="${color}" stroke-width="${w}" stroke-linecap="round" transform="rotate(${angle} ${this.n(cx)} ${this.n(cy)})"/>`);
+		}
+		return marks.join("");
 	}
 
-	private baseBackground(layout: Layout, style: DisplayStyle): string {
-		const vignette = style.blink ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.14)";
-		return `<rect x="0" y="0" width="${layout.widthPx}" height="${layout.heightPx}" fill="${style.background}" />
-		<rect x="0" y="0" width="${layout.widthPx}" height="${layout.heightPx}" fill="${vignette}" />`;
-	}
+	// ── Dual-color progress ring (green remaining + amber elapsed) ───────
 
-	private gridLines(layout: Layout, style: DisplayStyle): string {
+	private buildDualRing(layout: Layout, accentColor: string, fraction: number): string {
+		const cx = layout.widthPx / 2;
+		const cy = layout.heightPx / 2;
+		const r = Math.min(layout.widthPx, layout.heightPx) / 2 - this.ts * 0.10;
+		const circ = 2 * Math.PI * r;
+		const sw = Math.max(7, this.ts * 0.065);
+		const glowSw = sw * 3.5;
+		const f = Math.max(0, Math.min(1, fraction));
+
+		const greenLen = f * circ;
+		const amberLen = (1 - f) * circ;
+		const [gr, gg, gb] = hexToRgb(accentColor);
+		const [ar, ag, ab] = hexToRgb(AMBER);
+
 		const parts: string[] = [];
-		for (let c = 1; c < layout.columns; c += 1) {
-			const x = c * layout.tileSize;
-			parts.push(`<line x1="${x}" y1="0" x2="${x}" y2="${layout.heightPx}" stroke="${style.grid}" stroke-width="4" />`);
+
+		// Track (dim full circle)
+		parts.push(`<circle cx="${this.n(cx)}" cy="${this.n(cy)}" r="${this.n(r)}" fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="${sw}"/>`);
+
+		// Amber glow (elapsed)
+		if (amberLen > 1) {
+			const rot = -90 + f * 360;
+			parts.push(`<circle cx="${this.n(cx)}" cy="${this.n(cy)}" r="${this.n(r)}" fill="none" stroke="rgba(${ar},${ag},${ab},0.12)" stroke-width="${this.n(glowSw)}" stroke-dasharray="${this.n(amberLen)} ${this.n(circ)}" transform="rotate(${this.n(rot)} ${this.n(cx)} ${this.n(cy)})"/>`);
 		}
-		for (let r = 1; r < layout.rows; r += 1) {
-			const y = r * layout.tileSize;
-			parts.push(`<line x1="0" y1="${y}" x2="${layout.widthPx}" y2="${y}" stroke="${style.grid}" stroke-width="4" />`);
+
+		// Amber arc (elapsed)
+		if (amberLen > 1) {
+			const rot = -90 + f * 360;
+			parts.push(`<circle cx="${this.n(cx)}" cy="${this.n(cy)}" r="${this.n(r)}" fill="none" stroke="${AMBER}" stroke-width="${sw}" stroke-dasharray="${this.n(amberLen)} ${this.n(circ)}" transform="rotate(${this.n(rot)} ${this.n(cx)} ${this.n(cy)})"/>`);
 		}
+
+		// Green glow (remaining)
+		if (greenLen > 1) {
+			parts.push(`<circle cx="${this.n(cx)}" cy="${this.n(cy)}" r="${this.n(r)}" fill="none" stroke="rgba(${gr},${gg},${gb},0.18)" stroke-width="${this.n(glowSw)}" stroke-dasharray="${this.n(greenLen)} ${this.n(circ)}" transform="rotate(-90 ${this.n(cx)} ${this.n(cy)})"/>`);
+		}
+
+		// Green arc (remaining) — drawn last so it's on top
+		if (greenLen > 1) {
+			parts.push(`<circle cx="${this.n(cx)}" cy="${this.n(cy)}" r="${this.n(r)}" fill="none" stroke="${accentColor}" stroke-width="${sw}" stroke-linecap="round" stroke-dasharray="${this.n(greenLen)} ${this.n(circ)}" transform="rotate(-90 ${this.n(cx)} ${this.n(cy)})"/>`);
+		}
+
 		return parts.join("");
 	}
 
-	private buildStyle(remaining: number, total: number, options?: RenderOptions): DisplayStyle {
-		const ratio = total > 0 ? Math.max(0, Math.min(1, remaining / total)) : 0;
-		const accent = options?.accentColor ?? this.colorForRatio(ratio);
-		const background = options?.backgroundColor ?? "#050910";
-		const text = options?.textColor ?? "#e7f0ff";
+	// ── Decorative ring (idle/message state) ─────────────────────────────
 
-		const blink = options?.blink ?? false;
-		const grid = options?.gridColor ?? (blink ? "rgba(255,255,255,0.24)" : "rgba(255,255,255,0.12)");
-
-		return {
-			accent,
-			text,
-			background,
-			grid,
-			progressBg: options?.progressBackground ?? "rgba(255,255,255,0.12)",
-			progressFg: options?.progressColor ?? this.colorForRatio(ratio),
-			blink
-		};
+	private buildDecoRing(layout: Layout, color: string): string {
+		const cx = layout.widthPx / 2;
+		const cy = layout.heightPx / 2;
+		const r = Math.min(layout.widthPx, layout.heightPx) / 2 - this.ts * 0.10;
+		const [cr, cg, cb] = hexToRgb(color);
+		return `<circle cx="${this.n(cx)}" cy="${this.n(cy)}" r="${this.n(r)}" fill="none" stroke="rgba(${cr},${cg},${cb},0.10)" stroke-width="1.5"/>`;
 	}
 
-	private buildDefs(style: DisplayStyle): string {
-		return `<defs>
-			<filter id="digit-glow" x="-30%" y="-30%" width="160%" height="160%">
-				<feGaussianBlur stdDeviation="6" result="blur" />
-				<feMerge>
-					<feMergeNode in="blur" />
-					<feMergeNode in="SourceGraphic" />
-				</feMerge>
-			</filter>
-		</defs>`;
-	}
+	// ── Countdown digits (seven-segment in accent color) ─────────────────
 
-	private buildLayout(tiles: Tile[]): Layout {
-		const minCol = Math.min(...tiles.map((tile) => tile.col));
-		const maxCol = Math.max(...tiles.map((tile) => tile.col));
-		const minRow = Math.min(...tiles.map((tile) => tile.row));
-		const maxRow = Math.max(...tiles.map((tile) => tile.row));
+	private buildCountdownDigits(remaining: number, layout: Layout, accentColor: string): string {
+		const digits = remaining.toString().split("");
+		const baseW = 80, baseH = 140, gap = 20;
+		const padding = this.ts * 0.08;
 
-		const columns = maxCol - minCol + 1;
-		const rows = maxRow - minRow + 1;
-		const widthPx = columns * this.tileSize;
-		const heightPx = rows * this.tileSize;
+		const contentW = digits.length * baseW + Math.max(0, digits.length - 1) * gap;
+		const scale = Math.min(
+			(layout.widthPx - padding * 2) / contentW,
+			(layout.heightPx - padding * 2) / baseH,
+		);
 
-		return { tileSize: this.tileSize, minCol, minRow, columns, rows, widthPx, heightPx };
-	}
+		const dw = baseW * scale, dh = baseH * scale, dg = gap * scale;
+		const totalW = digits.length * dw + Math.max(0, digits.length - 1) * dg;
+		const startX = (layout.widthPx - totalW) / 2;
+		const startY = (layout.heightPx - dh) / 2;
 
-	private prepareTiles(actions: KeyAction[]): Tile[] {
-		const tiles: Tile[] = [];
-		for (const action of actions) {
-			const coords = action.coordinates;
-			if (!coords) continue;
-			tiles.push({ action, col: coords.column, row: coords.row });
+		let segs = "";
+		for (const [i, ch] of digits.entries()) {
+			const d = Number.parseInt(ch, 10);
+			const flags = this.segmentsForDigit(Number.isNaN(d) ? 0 : d);
+			segs += this.renderDigit(flags, startX + i * (dw + dg), startY, dw, dh, accentColor);
 		}
-
-		if (tiles.length === 0 && actions.length > 0) {
-			// Fallback: no coordinates available (e.g. multi-action), still render onto the first action.
-			tiles.push({ action: actions[0] as KeyAction, col: 0, row: 0 });
-		}
-
-		return tiles;
+		return segs;
 	}
 
-	private segmentsForDigit(digit: number): boolean[] {
-		// a, b, c, d, e, f, g
-		const mapping: Record<number, boolean[]> = {
+	// ── Message text ─────────────────────────────────────────────────────
+
+	private buildMessageText(message: string, layout: Layout, color: string): string {
+		const safe = this.escapeXml(message);
+		if (!safe) return "";
+
+		const isMulti = layout.columns > 1 || layout.rows > 1;
+		const padding = isMulti ? Math.max(this.ts * 0.16, layout.widthPx * 0.05) : this.ts * 0.12;
+		const maxFontW = (layout.widthPx - padding * 2) / Math.max(3, safe.length * 0.62);
+		const maxFontH = layout.heightPx * 0.38;
+		const fontSize = Math.min(maxFontW, maxFontH);
+
+		const cx = layout.widthPx / 2;
+		const cy = layout.heightPx / 2 + fontSize / 3;
+
+		return `<g filter="url(#glow)"><text x="${this.n(cx)}" y="${this.n(cy)}" fill="${color}" font-family="Segoe UI Semibold,Segoe UI,Arial" font-size="${this.n(fontSize)}" text-anchor="middle" letter-spacing="${this.n(fontSize * 0.04)}" dominant-baseline="middle">${safe}</text></g>`;
+	}
+
+	// ── Subtitle ─────────────────────────────────────────────────────────
+
+	private buildSubtitle(text: string, layout: Layout, color: string): string {
+		const fontSize = this.ts * 0.10;
+		const x = layout.widthPx / 2;
+		const y = layout.heightPx - this.ts * 0.10;
+		return `<text x="${this.n(x)}" y="${this.n(y)}" fill="${color}" font-family="Segoe UI,Arial" font-size="${this.n(fontSize)}" font-weight="600" text-anchor="middle" letter-spacing="3" opacity="0.85">${this.escapeXml(text.toUpperCase())}</text>`;
+	}
+
+	// ── Armed border ─────────────────────────────────────────────────────
+
+	private buildBorder(layout: Layout, color: string): string {
+		return `<rect x="3" y="3" width="${layout.widthPx - 6}" height="${layout.heightPx - 6}" fill="none" stroke="${color}" stroke-width="2.5" rx="5"/>`;
+	}
+
+	// ── Seven-segment rendering ──────────────────────────────────────────
+
+	private renderDigit(flags: boolean[], x: number, y: number, w: number, h: number, fill: string): string {
+		const t = Math.min(w, h) * 0.18;
+		const hLen = w - t * 2;
+		const vLen = (h - t * 3) / 2;
+		const r = t * 0.35;
+		const s: string[] = [];
+
+		if (flags[0]) s.push(this.rect(x + t, y, hLen, t, r, fill));
+		if (flags[1]) s.push(this.rect(x + t + hLen, y + t, t, vLen, r, fill));
+		if (flags[2]) s.push(this.rect(x + t + hLen, y + t * 2 + vLen, t, vLen, r, fill));
+		if (flags[3]) s.push(this.rect(x + t, y + t * 2 + vLen * 2, hLen, t, r, fill));
+		if (flags[4]) s.push(this.rect(x, y + t * 2 + vLen, t, vLen, r, fill));
+		if (flags[5]) s.push(this.rect(x, y + t, t, vLen, r, fill));
+		if (flags[6]) s.push(this.rect(x + t, y + t + vLen, hLen, t, r, fill));
+
+		return `<g filter="url(#glow)">${s.join("")}</g>`;
+	}
+
+	private rect(x: number, y: number, w: number, h: number, r: number, fill: string): string {
+		return `<rect x="${this.n(x)}" y="${this.n(y)}" width="${this.n(w)}" height="${this.n(h)}" rx="${this.n(r)}" ry="${this.n(r)}" fill="${fill}"/>`;
+	}
+
+	private segmentsForDigit(d: number): boolean[] {
+		const m: Record<number, boolean[]> = {
 			0: [true, true, true, true, true, true, false],
 			1: [false, true, true, false, false, false, false],
 			2: [true, true, false, true, true, false, true],
@@ -317,40 +323,55 @@ export class DisplayRenderer {
 			6: [true, false, true, true, true, true, true],
 			7: [true, true, true, false, false, false, false],
 			8: [true, true, true, true, true, true, true],
-			9: [true, true, true, true, false, true, true]
+			9: [true, true, true, true, false, true, true],
 		};
-
-		return mapping[digit] ?? mapping[0];
+		return m[d] ?? m[0]!;
 	}
 
-	private colorForRatio(ratio: number): string {
-		if (ratio > 0.66) {
-			return "#00d37f"; // green
-		}
-		if (ratio > 0.33) {
-			return "#ffb02e"; // amber
-		}
-		return "#ff3b30"; // red
+	// ── Layout helpers ───────────────────────────────────────────────────
+
+	private buildLayout(tiles: Tile[]): Layout {
+		const minCol = Math.min(...tiles.map((t) => t.col));
+		const maxCol = Math.max(...tiles.map((t) => t.col));
+		const minRow = Math.min(...tiles.map((t) => t.row));
+		const maxRow = Math.max(...tiles.map((t) => t.row));
+		const columns = maxCol - minCol + 1;
+		const rows = maxRow - minRow + 1;
+		return { tileSize: this.ts, minCol, minRow, columns, rows, widthPx: columns * this.ts, heightPx: rows * this.ts };
 	}
 
-	private escapeXml(value: string): string {
-		return value.replace(/[<>&"]/g, (char) => {
-			switch (char) {
-				case "<":
-					return "&lt;";
-				case ">":
-					return "&gt;";
-				case "&":
-					return "&amp;";
-				case '"':
-					return "&quot;";
-				default:
-					return char;
-			}
+	private prepareTiles(actions: KeyAction[]): Tile[] {
+		const tiles: Tile[] = [];
+		for (const a of actions) {
+			const c = a.coordinates;
+			if (c) tiles.push({ action: a, col: c.column, row: c.row });
+		}
+		if (tiles.length === 0 && actions.length > 0) {
+			tiles.push({ action: actions[0]!, col: 0, row: 0 });
+		}
+		return tiles;
+	}
+
+	// ── Arc color interpolation ──────────────────────────────────────────
+
+	private computeArcColor(fraction: number, accentColor: string): string {
+		const f = Math.max(0, Math.min(1, fraction));
+		if (f >= 0.5) {
+			// accentColor (full) → amber (half)
+			return lerpColor(hexToRgb(accentColor), hexToRgb(AMBER), (1 - f) * 2);
+		} else {
+			// amber (half) → red (zero)
+			return lerpColor(hexToRgb(AMBER), hexToRgb(RED), (0.5 - f) * 2);
+		}
+	}
+
+	// ── Utility ──────────────────────────────────────────────────────────
+
+	private n(v: number): number { return Math.round(v * 10) / 10; }
+
+	private escapeXml(v: string): string {
+		return v.replace(/[<>&"]/g, (c) => {
+			switch (c) { case "<": return "&lt;"; case ">": return "&gt;"; case "&": return "&amp;"; case '"': return "&quot;"; default: return c; }
 		});
-	}
-
-	private toDataUri(svg: string): string {
-		return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 	}
 }
