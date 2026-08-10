@@ -30,3 +30,4 @@ A Stream Deck plugin that shows a multi-key countdown and triggers a system powe
 ## Development
 - Build: `npm run build`
 - Watch (auto-rebuild + Stream Deck restart): `npm run watch`
+:)
