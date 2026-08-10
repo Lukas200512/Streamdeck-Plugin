@@ -12,7 +12,7 @@ A Stream Deck plugin that shows a multi-key countdown and triggers a system powe
    npm run build
    ```
 3. Copy the folder `com.lukas.shutdown.sdPlugin` into your Stream Deck plugins directory (e.g. `%AppData%\Elgato\StreamDeck\Plugins` on Windows).
-4. Restart Stream Deck.
+4. Restart Stream Deck. :)
 
 ## Usage
 - Add one **Shutdown Master** action to a page and configure it in the property inspector:
